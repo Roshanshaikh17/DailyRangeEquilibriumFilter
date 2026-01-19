@@ -1,0 +1,201 @@
+//+------------------------------------------------------------------+
+//| Phase 1: Day Range Equilibrium Filter (NO TRADING)               |
+//| Build-safe for MetaEditor 5430                                   |
+//+------------------------------------------------------------------+
+#property strict
+#property version "1.30"
+
+//-------------------- INPUTS ---------------------------------------
+input bool  ShowLevels   = true;
+input color DayHighColor = clrRed;
+input color DayLowColor  = clrGreen;
+input color ZoneColor    = clrGray;
+input bool  ShowDaySeparator = true;
+input color DaySeparatorColor = clrDodgerBlue;
+
+
+//-------------------- GLOBALS --------------------------------------
+double   DayHigh = -DBL_MAX;
+double   DayLow  =  DBL_MAX;
+datetime DayStart = 0;
+bool     DayReady = false;
+
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   ObjectsDeleteAll(0, "", OBJ_HLINE, 0);
+   ObjectsDeleteAll(0, "", OBJ_RECTANGLE, 0);
+   ChartSetInteger(0, CHART_AUTOSCROLL, true);
+   ChartSetInteger(0, CHART_SHIFT, true);
+
+   return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   ObjectsDeleteAll(0, "", OBJ_HLINE, 0);
+   ObjectsDeleteAll(0, "", OBJ_RECTANGLE, 0);
+}
+
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   datetime now = TimeCurrent();
+   datetime today = GetDayStart(now);
+
+   // New calendar day
+   if(today != DayStart)
+   {
+      ResetDay(today);
+      return;
+   }
+
+   // Initialize once per day as soon as possible
+   if(!DayReady && now >= DayStart + 300)
+   {
+      InitDayFromAvailableData();
+   }
+
+   if(!DayReady)
+      return;
+
+   // Dynamic price-based update
+   double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   if(price > DayHigh) DayHigh = price;
+   if(price < DayLow)  DayLow  = price;
+
+   DrawLevels();
+}
+
+//+------------------------------------------------------------------+
+datetime GetDayStart(datetime t)
+{
+   MqlDateTime dt;
+   TimeToStruct(t, dt);
+   dt.hour = 0;
+   dt.min  = 0;
+   dt.sec  = 0;
+   return StructToTime(dt);
+}
+
+//+------------------------------------------------------------------+
+void ResetDay(datetime today)
+{
+   DayStart = today;
+   DayHigh  = -DBL_MAX;
+   DayLow   =  DBL_MAX;
+   DayReady = false;
+
+   ObjectsDeleteAll(0, "", OBJ_HLINE, 0);
+   ObjectsDeleteAll(0, "", OBJ_RECTANGLE, 0);
+}
+
+//+------------------------------------------------------------------+
+void UpdateDayHighLow()
+{
+   double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   if(!DayReady)
+      return;
+
+   if(price > DayHigh)
+      DayHigh = price;
+
+   if(price < DayLow)
+      DayLow = price;
+}
+
+//+------------------------------------------------------------------+
+void DrawLevels()
+{
+   if(!ShowLevels || !DayReady || DayHigh <= DayLow)
+      return;
+
+   double range = DayHigh - DayLow;
+   double lvl25 = DayLow + range * 0.25;
+   double lvl75 = DayLow + range * 0.75;
+
+   DrawHLine("DAY_HIGH", DayHigh, DayHighColor);
+   DrawHLine("DAY_LOW",  DayLow,  DayLowColor);
+   DrawHLine("EQ_25",    lvl25,   ZoneColor);
+   DrawHLine("EQ_75",    lvl75,   ZoneColor);
+
+   DrawZone(lvl25, lvl75);
+}
+
+//+------------------------------------------------------------------+
+void DrawHLine(string name, double price, color clr)
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_HLINE, 0, 0, price);
+
+   ObjectSetDouble(0, name, OBJPROP_PRICE, price);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+}
+
+//+------------------------------------------------------------------+
+void DrawZone(double low, double high)
+{
+   string name = "NO_TRADE_ZONE";
+
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(
+         0, name, OBJ_RECTANGLE, 0,
+         TimeCurrent() - 86400, high,
+         TimeCurrent() + 86400, low
+      );
+   }
+
+   ObjectMove(0, name, 0, TimeCurrent() - 86400, high);
+   ObjectMove(0, name, 1, TimeCurrent() + 86400, low);
+
+   color zoneClr = ColorToARGB(ZoneColor, 85);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, zoneClr);
+   ObjectSetInteger(0, name, OBJPROP_BACK, true);
+}
+
+//+------------------------------------------------------------------+
+
+void InitDayFromAvailableData()
+{
+   int bars = iBars(_Symbol, PERIOD_M5);
+   if(bars <= 0) return;
+
+   DayHigh = -DBL_MAX;
+   DayLow  =  DBL_MAX;
+
+   for(int i = 0; i < bars; i++)
+   {
+      datetime t = iTime(_Symbol, PERIOD_M5, i);
+      if(t < DayStart) break;
+
+      double h = iHigh(_Symbol, PERIOD_M5, i);
+      double l = iLow(_Symbol, PERIOD_M5, i);
+
+      if(h > DayHigh) DayHigh = h;
+      if(l < DayLow)  DayLow  = l;
+   }
+
+   if(DayHigh > DayLow)
+      DayReady = true;
+}
+
+void DrawDaySeparator(datetime dayTime)
+{
+   if(!ShowDaySeparator)
+      return;
+
+   string name = "DAY_START_" + IntegerToString((int)dayTime);
+
+   if(ObjectFind(0, name) >= 0)
+      return;
+
+   ObjectCreate(0, name, OBJ_VLINE, 0, dayTime, 0);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, DaySeparatorColor);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+   ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DOT);
+}
